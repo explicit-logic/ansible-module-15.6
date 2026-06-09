@@ -13,6 +13,10 @@ This repository contains a demo project created as part of my **DevOps studies**
 
 ---
 
+## Overview
+
+![Architecture: Terraform-provisioned EKS cluster on AWS, with Ansible deploying an app into a new Kubernetes namespace](./images/overview.png)
+
 ## Prerequisites
 
 Copy and fill in the variables file:
@@ -21,27 +25,23 @@ Copy and fill in the variables file:
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit `terraform.tfvars` to set your AWS region and desired CIDR blocks.
-
----
-
-Overview
-![](./images/overview.png)
-
 ### Create EKS cluster with Terraform
 
-Run
+Provision the infrastructure:
+
 ```sh
 terraform init
 terraform apply
 ```
 
-![](./images/myapp-cluster.png)
+
+![EKS cluster myapp-eks-cluster in the AWS console](./images/myapp-cluster.png)
 
 
 ### Create a Namespace in EKS cluster
 
-Create a kubeconfig file
+Generate a kubeconfig for the new cluster. The `--region` and `--name` must match `terraform.tfvars` and the cluster `name` in `eks-cluster.tf`:
+
 ```sh
 aws eks update-kubeconfig --region eu-central-1 --name myapp-eks-cluster --kubeconfig ./kubeconfig-myapp-eks-cluster
 ```
@@ -64,19 +64,24 @@ Create `deploy-to-k8s.yaml` file
 
 Doc: https://docs.ansible.com/projects/ansible/latest/collections/kubernetes/core/k8s_module.html
 
-Install required modules:
+The `kubernetes.core.k8s` module needs the Kubernetes Python client (plus PyYAML and jsonpatch) available to the interpreter Ansible runs with. Install them into the project environment:
 
 ```sh
 uv sync
 ```
 
-Check modules are installed
+Verify the libraries import correctly (`uv run` uses the project virtualenv):
 
 ```sh
-python3 -c "import yaml"
-python3 -c "import kubernetes"
-python3 -c "import jsonpatch"
-python3 -c "import pyyaml"
+uv run python3 -c "import yaml, kubernetes, jsonpatch; print('dependencies OK')"
+```
+
+> Note: PyYAML is imported as `yaml`, not `pyyaml`.
+
+The module itself ships in the `kubernetes.core` Ansible collection. It is bundled with the `ansible` community package; if you installed `ansible-core` only, add it with:
+
+```sh
+ansible-galaxy collection install kubernetes.core
 ```
 
 Create `ansible.cfg`
@@ -96,7 +101,7 @@ Execute the playbook
 ansible-playbook deploy-to-k8s.yaml
 ```
 
-![](./images/execute-playbook.png)
+![Ansible playbook run creating the my-app namespace](./images/execute-playbook.png)
 
 Connect to k8s cluster
 
@@ -105,7 +110,7 @@ export KUBECONFIG=./kubeconfig-myapp-eks-cluster
 kubectl get ns
 ```
 
-![](./images/kubectl-get-ns.png)
+![kubectl get ns showing the new my-app namespace](./images/kubectl-get-ns.png)
 
 ### Deploy app in new namespace
 
@@ -126,36 +131,44 @@ Execute the playbook
 ansible-playbook deploy-to-k8s.yaml
 ```
 
-Check the app
+Check the app. The `nginx` Service is of type `LoadBalancer`, so AWS provisions an external load balancer — wait until `EXTERNAL-IP` shows a hostname rather than `<pending>`:
+
 ```sh
 kubectl get pod -n my-app
 kubectl get svc -n my-app
 ```
-![](./images/kubectl-get-app.png)
 
-Copy `EXTERNAL-IP` and open in the browser
+![kubectl showing the nginx pod and LoadBalancer service in my-app](./images/kubectl-get-app.png)
 
-![](./images/nginx-app.png)
+Copy `EXTERNAL-IP` and open it in the browser:
+
+![nginx welcome page served from the EKS cluster](./images/nginx-app.png)
 
 ### Set environment variable for kubeconfig
+
+Instead of passing `kubeconfig:` to every task, the `kubernetes.core` collection automatically reads the `K8S_AUTH_KUBECONFIG` environment variable:
 
 ```sh
 export K8S_AUTH_KUBECONFIG=./kubeconfig-myapp-eks-cluster
 ```
 
-Remove `kubeconfig` params from `deploy-to-k8s.yaml`
-
-Execute the playbook again
+Remove the `kubeconfig:` lines from every task in `deploy-to-k8s.yaml`, then run the playbook again:
 
 ```sh
 ansible-playbook deploy-to-k8s.yaml
 ```
 
-![](./images/env-var.png)
+![Playbook run authenticating via the K8S_AUTH_KUBECONFIG environment variable](./images/env-var.png)
 
 ### Clean-up
 
-Destroy kubernetes cluster
+The `nginx` Service of type `LoadBalancer` provisions an AWS load balancer that is **not** tracked in Terraform state. Delete the Kubernetes resources first so the load balancer is released; otherwise it can orphan ENIs and block the VPC from being destroyed:
+
+```sh
+kubectl delete -f nginx.yaml -n my-app
+```
+
+Then destroy the cluster and all remaining infrastructure:
 
 ```sh
 terraform destroy
