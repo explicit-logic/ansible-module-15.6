@@ -1,0 +1,10 @@
+.terraform
+*.tfstate
+*.tfstate.*
+
+# tf variable files, may include sensitive data
+*.tfvars
+.DS_Store
+
+/hosts
+/project-vars

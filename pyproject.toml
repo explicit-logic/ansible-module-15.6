@@ -1,0 +1,11 @@
+[project]
+name = "ansible-module-15-6"
+version = "0.1.0"
+description = "Automate Kubernetes Deployment"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "jsonpatch>=1.33",
+    "kubernetes>=36.0.2",
+    "pyyaml>=6.0.3",
+]
